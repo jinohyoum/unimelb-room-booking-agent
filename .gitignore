@@ -1,0 +1,12 @@
+# Environment
+.env
+.env.local
+
+# Bytecode / caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Editors
+.vscode/
+.idea/
