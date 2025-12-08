@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
@@ -8,6 +9,7 @@ from playwright.async_api import Page, async_playwright
 
 LOGIN_URL = "https://library.unimelb.edu.au/services/book-a-room-or-computer"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+EXAMPLE_BOOKING_PATH = PROJECT_ROOT / "example_booking.json"
 
 
 def load_env() -> None:
@@ -23,6 +25,15 @@ def load_env() -> None:
         os.environ.setdefault(key.strip(), value.strip())
 
 
+def load_space_label(default: str = "Book a Space in a Library") -> str:
+    """Return the space label from example_booking.json, falling back to default."""
+    try:
+        data = json.loads(EXAMPLE_BOOKING_PATH.read_text())
+        return str(data.get("space", default)) or default
+    except Exception:
+        return default
+
+
 async def run_login_probe(
     *,
     slow_mo_ms: int = 400,
@@ -36,6 +47,7 @@ async def run_login_probe(
     username = os.getenv("DIBS_USERNAME", "")
     password = os.getenv("DIBS_PASSWORD", "")
 
+    space_label = load_space_label()
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=headless, slow_mo=slow_mo_ms)
         page = await browser.new_page()
@@ -89,6 +101,25 @@ async def run_login_probe(
             except Exception as exc:
                 print(f"Could not click 'Create A Reservation': {exc}")
         await page.wait_for_load_state("networkidle")
+
+        # After the reservation landing page loads, click the configured space tile,
+        # then click the specific "book now" button shown in the inspected markup.
+        try:
+            book_space_tile = page.get_by_text(space_label, exact=True)
+            await book_space_tile.wait_for(state="visible", timeout=10_000)
+            await book_space_tile.scroll_into_view_if_needed()
+            await book_space_tile.click()
+
+            # Button aria-label pattern: Book Now With The "<space_label>" Template
+            book_now_button = page.get_by_role(
+                "button",
+                name=f'Book Now With The "{space_label}" Template',
+            )
+            await book_now_button.wait_for(state="visible", timeout=10_000)
+            await book_now_button.scroll_into_view_if_needed()
+            await book_now_button.click()
+        except Exception as exc:
+            print(f"Could not click space '{space_label}' / book-now button: {exc}")
 
         if post_login:
             await post_login(page)
