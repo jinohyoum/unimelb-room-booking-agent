@@ -1,0 +1,12 @@
+{
+    "space": "Book a Space in a Library",
+    "space_type": "group_room",
+    "date": "2025-12-10",
+    "start_time": "14:00",
+    "end_time": "16:00",
+    "event_name": "Raid",
+    "event_type": "Meeting",
+    "first_contact_mobile": "0466279109",
+    "min_capacity": 4,
+    "notes": "Test booking from Playwright"
+  }

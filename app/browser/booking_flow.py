@@ -1,9 +1,10 @@
 import asyncio
 import os
 from pathlib import Path
+from typing import Awaitable, Callable, Optional
 from urllib.parse import urlsplit
 
-from playwright.async_api import async_playwright
+from playwright.async_api import Page, async_playwright
 
 LOGIN_URL = "https://library.unimelb.edu.au/services/book-a-room-or-computer"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -22,13 +23,21 @@ def load_env() -> None:
         os.environ.setdefault(key.strip(), value.strip())
 
 
-async def main() -> None:
+async def run_login_probe(
+    *,
+    slow_mo_ms: int = 400,
+    headless: bool = False,
+    post_login: Optional[Callable[[Page], Awaitable[None]]] = None,
+    pause_before_close: bool = True,
+) -> None:
+    """Open the booking site, log in, then optionally run extra steps."""
+
     load_env()
     username = os.getenv("DIBS_USERNAME", "")
     password = os.getenv("DIBS_PASSWORD", "")
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, slow_mo=400)
+        browser = await p.chromium.launch(headless=headless, slow_mo=slow_mo_ms)
         page = await browser.new_page()
 
         await page.goto(LOGIN_URL, wait_until="domcontentloaded")
@@ -64,11 +73,36 @@ async def main() -> None:
         else:
             print("Set DIBS_USERNAME in .env to auto-fill the username field.")
 
+        # Proceed into the booking flow landing page (footer link)
+        try:
+            footer_link = page.locator("a.link-footer[href*='RoomRequest.aspx']")
+            await footer_link.wait_for(state="visible", timeout=10_000)
+            await footer_link.scroll_into_view_if_needed()
+            await footer_link.click()
+        except Exception:
+            try:
+                # Fallback: sidebar link id if footer not present
+                await page.wait_for_selector("a#sidebar-wrapper-home", timeout=10_000)
+                link = page.locator("a#sidebar-wrapper-home")
+                await link.scroll_into_view_if_needed()
+                await link.click()
+            except Exception as exc:
+                print(f"Could not click 'Create A Reservation': {exc}")
+        await page.wait_for_load_state("networkidle")
+
+        if post_login:
+            await post_login(page)
+
         # Keep the browser open until YOU decide to close it
-        print("Browser is open. Do your thing, then press Enter in the terminal to close it...")
-        input()  # blocks until you press Enter
+        if pause_before_close:
+            print("Browser is open. Do your thing, then press Enter in the terminal to close it...")
+            input()  # blocks until you press Enter
 
         await browser.close()
+
+
+async def main() -> None:
+    await run_login_probe()
 
 
 if __name__ == "__main__":
