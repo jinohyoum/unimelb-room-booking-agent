@@ -35,6 +35,36 @@ def load_space_label(default: str = "Book a Space in a Library") -> str:
         return default
 
 
+def load_booking_date(default: str = "") -> str:
+    """Return the booking date string from example_booking.json."""
+    try:
+        data = json.loads(EXAMPLE_BOOKING_PATH.read_text())
+        date_value = str(data.get("date", default)).strip()
+        return date_value or default
+    except Exception:
+        return default
+
+
+def load_booking_start_time(default: str = "") -> str:
+    """Return the booking start time string from example_booking.json."""
+    try:
+        data = json.loads(EXAMPLE_BOOKING_PATH.read_text())
+        value = str(data.get("start_time", default)).strip()
+        return value or default
+    except Exception:
+        return default
+
+
+def load_booking_end_time(default: str = "") -> str:
+    """Return the booking end time string from example_booking.json."""
+    try:
+        data = json.loads(EXAMPLE_BOOKING_PATH.read_text())
+        value = str(data.get("end_time", default)).strip()
+        return value or default
+    except Exception:
+        return default
+
+
 async def run_login_probe(
     *,
     slow_mo_ms: int = 400,
@@ -131,6 +161,85 @@ async def run_login_probe(
             await book_now_button.wait_for(state="visible", timeout=10_000)
             await book_now_button.scroll_into_view_if_needed()
             await book_now_button.click()
+
+            # Fill the date field using the booking-date container locator.
+            booking_date = load_booking_date()
+            if booking_date:
+                try:
+                    print(f"Attempting date fill via '#booking-date input' with '{booking_date}'")
+                    date_input = page.locator("#booking-date input").first
+                    await date_input.wait_for(state="visible", timeout=10_000)
+                    await date_input.click()
+                    await date_input.fill("")
+                    await date_input.type(booking_date, delay=50)
+                    await date_input.press("Enter")
+                    box = await date_input.bounding_box()
+                    if box:
+                        await page.mouse.click(
+                            box["x"] + box["width"] / 2,
+                            box["y"] + box["height"] / 2,
+                        )
+                    print("Filled date via #booking-date input")
+                except Exception as exc:
+                    print(f"Could not fill date via #booking-date input: {exc}")
+            else:
+                print("No booking date configured; skipping date fill")
+
+            # Fill start time
+            start_time = load_booking_start_time()
+            if start_time:
+                try:
+                    print(f"Attempting start time fill via get_by_label with '{start_time}'")
+                    start_input = page.get_by_label("StartTime Required.")
+                    await start_input.wait_for(state="visible", timeout=10_000)
+                    await start_input.click()
+                    await start_input.fill("")
+                    await start_input.type(start_time, delay=50)
+                    await start_input.press("Enter")
+                    box = await start_input.bounding_box()
+                    if box:
+                        await page.mouse.click(
+                            box["x"] + box["width"] / 2,
+                            box["y"] + box["height"] / 2,
+                        )
+                    print("Filled start time via get_by_label")
+                except Exception as exc:
+                    print(f"Could not fill start time: {exc}")
+            else:
+                print("No start time configured; skipping start time fill")
+
+            # Fill end time
+            end_time = load_booking_end_time()
+            if end_time:
+                try:
+                    print(f"Attempting end time fill via get_by_label with '{end_time}'")
+                    end_input = page.get_by_label("EndTime Required.")
+                    await end_input.wait_for(state="visible", timeout=10_000)
+                    await end_input.click()
+                    await end_input.fill("")
+                    await end_input.type(end_time, delay=50)
+                    await end_input.press("Enter")
+                    box = await end_input.bounding_box()
+                    if box:
+                        await page.mouse.click(
+                            box["x"] + box["width"] / 2,
+                            box["y"] + box["height"] / 2,
+                        )
+                    print("Filled end time via get_by_label")
+                except Exception as exc:
+                    print(f"Could not fill end time: {exc}")
+            else:
+                print("No end time configured; skipping end time fill")
+
+            # Click Search within Date & Time group
+            try:
+                print("Attempting to click Search button")
+                search_button = page.get_by_label("Date & Time").get_by_role("button", name="Search")
+                await search_button.wait_for(state="visible", timeout=10_000)
+                await search_button.click()
+                print("Clicked Search button")
+            except Exception as exc:
+                print(f"Could not click Search button: {exc}")
         except Exception as exc:
             print(f"Could not click space '{space_label}' / book-now button: {exc}")
 
