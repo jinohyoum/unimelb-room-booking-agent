@@ -65,6 +65,106 @@ def load_booking_end_time(default: str = "") -> str:
         return default
 
 
+def load_preferred_library(default: str = "") -> str:
+    """Return the preferred library string from example_booking.json."""
+    try:
+        data = json.loads(EXAMPLE_BOOKING_PATH.read_text())
+        value = str(data.get("preferred_library", default)).strip()
+        return value or default
+    except Exception:
+        return default
+
+
+def load_min_capacity(default: int = 0) -> int:
+    """Return the minimum capacity from example_booking.json."""
+    try:
+        data = json.loads(EXAMPLE_BOOKING_PATH.read_text())
+        value = data.get("min_capacity", default)
+        return int(value)
+    except Exception:
+        return default
+
+
+async def select_first_room(page: Page) -> None:
+    """Pick the first room result and add it to the cart."""
+
+    preferred_library = load_preferred_library()
+    min_capacity = load_min_capacity()
+
+    tbody_selector = (
+        'tbody[data-bind="foreach: { data: listRoomResults, afterRender: bindMatchTooltips }"]'
+    )
+    result_rows = page.locator(f"{tbody_selector} tr[data-recordtype='1']")
+    first_row = result_rows.first
+    await first_row.wait_for(state="visible", timeout=15_000)
+
+    target_row = first_row
+    if preferred_library or min_capacity > 0:
+        row_count = await result_rows.count()
+        preferred_lower = preferred_library.strip().lower()
+        matched = False
+        for idx in range(row_count):
+            candidate = result_rows.nth(idx)
+
+            building_locator = candidate.locator("a[data-bind*='BuildingDescription']").first
+            building = ""
+            try:
+                building = (await building_locator.inner_text()).strip()
+            except Exception:
+                building = ""
+
+            capacity_cell = candidate.locator("td[tabindex='0'][data-bind='text: Capacity']").first
+            capacity_value = 0
+            try:
+                capacity_text = (await capacity_cell.inner_text()).strip()
+                capacity_value = int(capacity_text or 0)
+            except Exception:
+                capacity_value = 0
+
+            library_ok = not preferred_library or building.lower() == preferred_lower
+            capacity_ok = capacity_value >= min_capacity
+
+            if library_ok and capacity_ok:
+                target_row = candidate
+                matched = True
+                print(
+                    f"Matched room with library='{building}', capacity={capacity_value} "
+                    f"(min={min_capacity})"
+                )
+                break
+
+        if not matched:
+            print(
+                f"No room matched preferred_library='{preferred_library}' "
+                f"and min_capacity={min_capacity}; using first result instead."
+            )
+
+    await target_row.scroll_into_view_if_needed()
+
+    description_locator = target_row.locator("a[data-bind*='RoomDescription']").first
+    description = ""
+    try:
+        description = (await description_locator.inner_text()).strip()
+    except Exception:
+        description = ""
+    print(f"Selecting room: {description or '<no description found>'}")
+
+    add_to_cart = target_row.locator("td.action-button-column a.add-to-cart").first
+    icon = add_to_cart.locator("i.fa-plus-circle").first
+    await add_to_cart.wait_for(state="visible", timeout=10_000)
+    await icon.wait_for(state="visible", timeout=10_000)
+    await add_to_cart.scroll_into_view_if_needed()
+
+    try:
+        aria_label = (await icon.get_attribute("aria-label")) or ""
+        if aria_label:
+            print(f"Add-to-cart aria-label: {aria_label}")
+    except Exception:
+        pass
+
+    await add_to_cart.click()
+
+
 async def run_login_probe(
     *,
     slow_mo_ms: int = 400,
@@ -238,6 +338,10 @@ async def run_login_probe(
                 await search_button.wait_for(state="visible", timeout=10_000)
                 await search_button.click()
                 print("Clicked Search button")
+                try:
+                    await select_first_room(page)
+                except Exception as exc:
+                    print(f"Could not select first room: {exc}")
             except Exception as exc:
                 print(f"Could not click Search button: {exc}")
         except Exception as exc:
