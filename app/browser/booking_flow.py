@@ -10,6 +10,7 @@ from playwright.async_api import Page, async_playwright
 LOGIN_URL = "https://library.unimelb.edu.au/services/book-a-room-or-computer"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 EXAMPLE_BOOKING_PATH = PROJECT_ROOT / "example_booking.json"
+STORAGE_STATE_PATH = PROJECT_ROOT / "storage_state.json"
 
 
 def load_env() -> None:
@@ -50,7 +51,10 @@ async def run_login_probe(
     space_label = load_space_label()
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=headless, slow_mo=slow_mo_ms)
-        page = await browser.new_page()
+        storage_state = str(STORAGE_STATE_PATH) if STORAGE_STATE_PATH.exists() else None
+        context = await browser.new_context(storage_state=storage_state)
+        page = await context.new_page()
+        reached_landing = False
 
         await page.goto(LOGIN_URL, wait_until="domcontentloaded")
 
@@ -63,7 +67,13 @@ async def run_login_probe(
         await page.get_by_role("link", name="Book a room - DiBS").click()
         await page.wait_for_load_state("networkidle")
 
-        if username:
+        login_prompt_visible = False
+        try:
+            login_prompt_visible = await page.get_by_role("textbox", name="Username").is_visible()
+        except Exception:
+            login_prompt_visible = False
+
+        if username and login_prompt_visible:
             try:
                 await page.get_by_role("textbox", name="Username").fill(username)
                 await page.get_by_role("button", name="Next").click()
@@ -82,6 +92,8 @@ async def run_login_probe(
                         print(f"Could not click the second 'Select' button: {exc}")
             except Exception as exc:
                 print(f"Could not auto-fill username: {exc}")
+        elif not login_prompt_visible:
+            print("Login form not visible; assuming stored session is active.")
         else:
             print("Set DIBS_USERNAME in .env to auto-fill the username field.")
 
@@ -101,6 +113,7 @@ async def run_login_probe(
             except Exception as exc:
                 print(f"Could not click 'Create A Reservation': {exc}")
         await page.wait_for_load_state("networkidle")
+        reached_landing = True
 
         # After the reservation landing page loads, click the configured space tile,
         # then click the specific "book now" button shown in the inspected markup.
@@ -128,6 +141,12 @@ async def run_login_probe(
         if pause_before_close:
             print("Browser is open. Do your thing, then press Enter in the terminal to close it...")
             input()  # blocks until you press Enter
+
+        if reached_landing:
+            try:
+                await page.context.storage_state(path=str(STORAGE_STATE_PATH))
+            except Exception as exc:
+                print(f"Could not save storage state: {exc}")
 
         await browser.close()
 
