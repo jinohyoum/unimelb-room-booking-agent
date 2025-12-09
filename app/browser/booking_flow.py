@@ -80,9 +80,35 @@ def load_min_capacity(default: int = 0) -> int:
     try:
         data = json.loads(EXAMPLE_BOOKING_PATH.read_text())
         value = data.get("min_capacity", default)
+        print(f"Min capacity: {value}")
         return int(value)
     except Exception:
         return default
+
+
+def load_event_name(default: str = "") -> str:
+    """Return the event name from example_booking.json."""
+    try:
+        data = json.loads(EXAMPLE_BOOKING_PATH.read_text())
+        value = str(data.get("event_name", default)).strip()
+        return value or default
+    except Exception:
+        return default
+
+
+async def set_attendees_to_min_capacity(page: Page) -> None:
+    """Fill the Number of Attendees spinner with the configured min capacity."""
+
+    min_capacity = load_min_capacity()
+    try:
+        attendees_input = page.get_by_role("spinbutton", name="Number of Attendees")
+        await attendees_input.wait_for(state="visible", timeout=5000)
+        await attendees_input.click()
+        await attendees_input.fill("")
+        await attendees_input.type(str(min_capacity), delay=20)
+        print(f"Set Number of Attendees to {min_capacity}")
+    except Exception as exc:
+        print(f"Could not set Number of Attendees: {exc}")
 
 
 async def select_first_room(page: Page) -> None:
@@ -96,7 +122,7 @@ async def select_first_room(page: Page) -> None:
     )
     result_rows = page.locator(f"{tbody_selector} tr[data-recordtype='1']")
     first_row = result_rows.first
-    await first_row.wait_for(state="visible", timeout=15_000)
+    await first_row.wait_for(state="visible", timeout=5000)
 
     target_row = first_row
     if preferred_library or min_capacity > 0:
@@ -165,6 +191,70 @@ async def select_first_room(page: Page) -> None:
     await add_to_cart.click()
 
 
+async def add_space_and_next_step(page: Page) -> None:
+    """Click Add Space and proceed to Next Step."""
+
+    try:
+        add_space_btn = page.get_by_role("button", name="Add Space")
+        await add_space_btn.wait_for(state="visible", timeout=10_000)
+        await add_space_btn.scroll_into_view_if_needed()
+        await add_space_btn.click()
+        print("Clicked Add Space")
+    except Exception as exc:
+        print(f"Could not click Add Space: {exc}")
+
+    # Small pause to let the UI update before proceeding.
+    await page.wait_for_timeout(5000)
+
+    try:
+        next_step_btn = page.get_by_role("button", name="Next Step")
+        await next_step_btn.wait_for(state="visible", timeout=10_000)
+        await next_step_btn.scroll_into_view_if_needed()
+        await next_step_btn.click()
+        print("Clicked Next Step")
+    except Exception as exc:
+        print(f"Could not click Next Step: {exc}")
+
+
+async def fill_event_and_submit(page: Page) -> None:
+    """Fill event details, accept terms, and create the reservation."""
+
+    # Event name textbox
+    event_name = load_event_name()
+    try:
+        event_input = page.get_by_role("textbox", name="Event Name * Event Name *")
+        await event_input.wait_for(state="visible", timeout=5000)
+        await event_input.scroll_into_view_if_needed()
+        await event_input.click()
+        await event_input.fill("")
+        await event_input.type(event_name, delay=20)
+        print(f"Filled event name: {event_name}")
+    except Exception as exc:
+        print(f"Could not fill event name: {exc}")
+
+    # Terms and conditions checkbox (via label click)
+    try:
+        terms_label = page.locator("label").filter(
+            has_text="I have read and agree to the Terms and Conditions"
+        ).first
+        await terms_label.wait_for(state="visible", timeout=5000)
+        await terms_label.scroll_into_view_if_needed()
+        await terms_label.click()
+        print("Checked Terms and Conditions")
+    except Exception as exc:
+        print(f"Could not check Terms and Conditions: {exc}")
+
+    # Create Reservation
+    try:
+        create_btn = page.locator("#details").get_by_role("button", name="Create Reservation")
+        await create_btn.wait_for(state="visible", timeout=5000)
+        await create_btn.scroll_into_view_if_needed()
+        await create_btn.click()
+        print("Clicked Create Reservation")
+    except Exception as exc:
+        print(f"Could not click Create Reservation: {exc}")
+
+
 async def run_login_probe(
     *,
     slow_mo_ms: int = 400,
@@ -230,13 +320,13 @@ async def run_login_probe(
         # Proceed into the booking flow landing page (footer link)
         try:
             footer_link = page.locator("a.link-footer[href*='RoomRequest.aspx']")
-            await footer_link.wait_for(state="visible", timeout=10_000)
+            await footer_link.wait_for(state="visible", timeout=5000)
             await footer_link.scroll_into_view_if_needed()
             await footer_link.click()
         except Exception:
             try:
                 # Fallback: sidebar link id if footer not present
-                await page.wait_for_selector("a#sidebar-wrapper-home", timeout=10_000)
+                await page.wait_for_selector("a#sidebar-wrapper-home", timeout=5000)
                 link = page.locator("a#sidebar-wrapper-home")
                 await link.scroll_into_view_if_needed()
                 await link.click()
@@ -249,7 +339,7 @@ async def run_login_probe(
         # then click the specific "book now" button shown in the inspected markup.
         try:
             book_space_tile = page.get_by_text(space_label, exact=True)
-            await book_space_tile.wait_for(state="visible", timeout=10_000)
+            await book_space_tile.wait_for(state="visible", timeout=5000)
             await book_space_tile.scroll_into_view_if_needed()
             await book_space_tile.click()
 
@@ -258,7 +348,7 @@ async def run_login_probe(
                 "button",
                 name=f'Book Now With The "{space_label}" Template',
             )
-            await book_now_button.wait_for(state="visible", timeout=10_000)
+            await book_now_button.wait_for(state="visible", timeout=5000)
             await book_now_button.scroll_into_view_if_needed()
             await book_now_button.click()
 
@@ -268,17 +358,12 @@ async def run_login_probe(
                 try:
                     print(f"Attempting date fill via '#booking-date input' with '{booking_date}'")
                     date_input = page.locator("#booking-date input").first
-                    await date_input.wait_for(state="visible", timeout=10_000)
+                    await date_input.wait_for(state="visible", timeout=5000)
                     await date_input.click()
                     await date_input.fill("")
-                    await date_input.type(booking_date, delay=50)
+                    await date_input.type(booking_date, delay=20)
                     await date_input.press("Enter")
                     box = await date_input.bounding_box()
-                    if box:
-                        await page.mouse.click(
-                            box["x"] + box["width"] / 2,
-                            box["y"] + box["height"] / 2,
-                        )
                     print("Filled date via #booking-date input")
                 except Exception as exc:
                     print(f"Could not fill date via #booking-date input: {exc}")
@@ -291,17 +376,12 @@ async def run_login_probe(
                 try:
                     print(f"Attempting start time fill via get_by_label with '{start_time}'")
                     start_input = page.get_by_label("StartTime Required.")
-                    await start_input.wait_for(state="visible", timeout=10_000)
+                    await start_input.wait_for(state="visible", timeout=5000)
                     await start_input.click()
                     await start_input.fill("")
-                    await start_input.type(start_time, delay=50)
+                    await start_input.type(start_time, delay=20)
                     await start_input.press("Enter")
                     box = await start_input.bounding_box()
-                    if box:
-                        await page.mouse.click(
-                            box["x"] + box["width"] / 2,
-                            box["y"] + box["height"] / 2,
-                        )
                     print("Filled start time via get_by_label")
                 except Exception as exc:
                     print(f"Could not fill start time: {exc}")
@@ -314,17 +394,12 @@ async def run_login_probe(
                 try:
                     print(f"Attempting end time fill via get_by_label with '{end_time}'")
                     end_input = page.get_by_label("EndTime Required.")
-                    await end_input.wait_for(state="visible", timeout=10_000)
+                    await end_input.wait_for(state="visible", timeout=5000)
                     await end_input.click()
                     await end_input.fill("")
-                    await end_input.type(end_time, delay=50)
+                    await end_input.type(end_time, delay=20)
                     await end_input.press("Enter")
                     box = await end_input.bounding_box()
-                    if box:
-                        await page.mouse.click(
-                            box["x"] + box["width"] / 2,
-                            box["y"] + box["height"] / 2,
-                        )
                     print("Filled end time via get_by_label")
                 except Exception as exc:
                     print(f"Could not fill end time: {exc}")
@@ -335,11 +410,14 @@ async def run_login_probe(
             try:
                 print("Attempting to click Search button")
                 search_button = page.get_by_label("Date & Time").get_by_role("button", name="Search")
-                await search_button.wait_for(state="visible", timeout=10_000)
+                await search_button.wait_for(state="visible", timeout=5000)
                 await search_button.click()
                 print("Clicked Search button")
                 try:
                     await select_first_room(page)
+                    await set_attendees_to_min_capacity(page)
+                    await add_space_and_next_step(page)
+                    await fill_event_and_submit(page)
                 except Exception as exc:
                     print(f"Could not select first room: {exc}")
             except Exception as exc:

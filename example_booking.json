@@ -2,12 +2,8 @@
     "space": "Book a Space in a Library",
     "preferred_library": "Baillieu Library",
     "min_capacity": 5,
-    "space_type": "group_room",
     "date": "10/12/2025",
     "start_time": "14:00",
     "end_time": "16:00",
-    "event_name": "Raid",
-    "event_type": "Meeting",
-    "first_contact_mobile": "0466279109",
-    "notes": "Test booking from Playwright"
+    "event_name": "Raid Meeting"
   }
