@@ -1,8 +1,9 @@
 import asyncio
 import json
 import os
+from functools import lru_cache
 from pathlib import Path
-from typing import Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional
 from urllib.parse import urlsplit
 
 from playwright.async_api import Page, async_playwright
@@ -26,80 +27,62 @@ def load_env() -> None:
         os.environ.setdefault(key.strip(), value.strip())
 
 
-def load_space_label(default: str = "Book a Space in a Library") -> str:
-    """Return the space label from example_booking.json, falling back to default."""
+@lru_cache(maxsize=1)
+def _booking_data() -> dict[str, Any]:
+    """Read example_booking.json once and cache it for repeated lookups."""
     try:
-        data = json.loads(EXAMPLE_BOOKING_PATH.read_text())
-        return str(data.get("space", default)) or default
+        return json.loads(EXAMPLE_BOOKING_PATH.read_text())
     except Exception:
-        return default
+        return {}
 
 
-def load_booking_date(default: str = "") -> str:
-    """Return the booking date string from example_booking.json."""
+def _booking_str(key: str, default: str) -> str:
+    value = _booking_data().get(key, default)
+    return (str(value).strip() or default) if value is not None else default
+
+
+def _booking_int(key: str, default: int) -> int:
     try:
-        data = json.loads(EXAMPLE_BOOKING_PATH.read_text())
-        date_value = str(data.get("date", default)).strip()
-        return date_value or default
-    except Exception:
-        return default
-
-
-def load_booking_start_time(default: str = "") -> str:
-    """Return the booking start time string from example_booking.json."""
-    try:
-        data = json.loads(EXAMPLE_BOOKING_PATH.read_text())
-        value = str(data.get("start_time", default)).strip()
-        return value or default
-    except Exception:
-        return default
-
-
-def load_booking_end_time(default: str = "") -> str:
-    """Return the booking end time string from example_booking.json."""
-    try:
-        data = json.loads(EXAMPLE_BOOKING_PATH.read_text())
-        value = str(data.get("end_time", default)).strip()
-        return value or default
-    except Exception:
-        return default
-
-
-def load_preferred_library(default: str = "") -> str:
-    """Return the preferred library string from example_booking.json."""
-    try:
-        data = json.loads(EXAMPLE_BOOKING_PATH.read_text())
-        value = str(data.get("preferred_library", default)).strip()
-        return value or default
-    except Exception:
-        return default
-
-
-def load_min_capacity(default: int = 0) -> int:
-    """Return the minimum capacity from example_booking.json."""
-    try:
-        data = json.loads(EXAMPLE_BOOKING_PATH.read_text())
-        value = data.get("min_capacity", default)
-        print(f"Min capacity: {value}")
+        value = _booking_data().get(key, default)
         return int(value)
     except Exception:
         return default
 
 
-def load_event_name(default: str = "") -> str:
-    """Return the event name from example_booking.json."""
-    try:
-        data = json.loads(EXAMPLE_BOOKING_PATH.read_text())
-        value = str(data.get("event_name", default)).strip()
-        return value or default
-    except Exception:
-        return default
+def get_space_label(default: str = "Book a Space in a Library") -> str:
+    return _booking_str("space", default)
+
+
+def get_booking_date(default: str = "") -> str:
+    return _booking_str("date", default)
+
+
+def get_booking_start_time(default: str = "") -> str:
+    return _booking_str("start_time", default)
+
+
+def get_booking_end_time(default: str = "") -> str:
+    return _booking_str("end_time", default)
+
+
+def get_preferred_library(default: str = "") -> str:
+    return _booking_str("preferred_library", default)
+
+
+def get_min_capacity(default: int = 0) -> int:
+    value = _booking_int("min_capacity", default)
+    print(f"Min capacity: {value}")
+    return value
+
+
+def get_event_name(default: str = "") -> str:
+    return _booking_str("event_name", default)
 
 
 async def set_attendees_to_min_capacity(page: Page) -> None:
     """Fill the Number of Attendees spinner with the configured min capacity."""
 
-    min_capacity = load_min_capacity()
+    min_capacity = get_min_capacity()
     try:
         attendees_input = page.get_by_role("spinbutton", name="Number of Attendees")
         await attendees_input.wait_for(state="visible", timeout=5000)
@@ -114,8 +97,8 @@ async def set_attendees_to_min_capacity(page: Page) -> None:
 async def select_first_room(page: Page) -> None:
     """Pick the first room result and add it to the cart."""
 
-    preferred_library = load_preferred_library()
-    min_capacity = load_min_capacity()
+    preferred_library = get_preferred_library()
+    min_capacity = get_min_capacity()
 
     tbody_selector = (
         'tbody[data-bind="foreach: { data: listRoomResults, afterRender: bindMatchTooltips }"]'
@@ -220,7 +203,7 @@ async def fill_event_and_submit(page: Page) -> None:
     """Fill event details, accept terms, and create the reservation."""
 
     # Event name textbox
-    event_name = load_event_name()
+    event_name = get_event_name()
     try:
         event_input = page.get_by_role("textbox", name="Event Name * Event Name *")
         await event_input.wait_for(state="visible", timeout=5000)
@@ -268,7 +251,7 @@ async def run_login_probe(
     username = os.getenv("DIBS_USERNAME", "")
     password = os.getenv("DIBS_PASSWORD", "")
 
-    space_label = load_space_label()
+    space_label = get_space_label()
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=headless, slow_mo=slow_mo_ms)
         storage_state = str(STORAGE_STATE_PATH) if STORAGE_STATE_PATH.exists() else None
@@ -353,7 +336,7 @@ async def run_login_probe(
             await book_now_button.click()
 
             # Fill the date field using the booking-date container locator.
-            booking_date = load_booking_date()
+            booking_date = get_booking_date()
             if booking_date:
                 try:
                     print(f"Attempting date fill via '#booking-date input' with '{booking_date}'")
@@ -363,7 +346,6 @@ async def run_login_probe(
                     await date_input.fill("")
                     await date_input.type(booking_date, delay=20)
                     await date_input.press("Enter")
-                    box = await date_input.bounding_box()
                     print("Filled date via #booking-date input")
                 except Exception as exc:
                     print(f"Could not fill date via #booking-date input: {exc}")
@@ -371,7 +353,7 @@ async def run_login_probe(
                 print("No booking date configured; skipping date fill")
 
             # Fill start time
-            start_time = load_booking_start_time()
+            start_time = get_booking_start_time()
             if start_time:
                 try:
                     print(f"Attempting start time fill via get_by_label with '{start_time}'")
@@ -381,7 +363,6 @@ async def run_login_probe(
                     await start_input.fill("")
                     await start_input.type(start_time, delay=20)
                     await start_input.press("Enter")
-                    box = await start_input.bounding_box()
                     print("Filled start time via get_by_label")
                 except Exception as exc:
                     print(f"Could not fill start time: {exc}")
@@ -389,7 +370,7 @@ async def run_login_probe(
                 print("No start time configured; skipping start time fill")
 
             # Fill end time
-            end_time = load_booking_end_time()
+            end_time = get_booking_end_time()
             if end_time:
                 try:
                     print(f"Attempting end time fill via get_by_label with '{end_time}'")
@@ -399,7 +380,6 @@ async def run_login_probe(
                     await end_input.fill("")
                     await end_input.type(end_time, delay=20)
                     await end_input.press("Enter")
-                    box = await end_input.bounding_box()
                     print("Filled end time via get_by_label")
                 except Exception as exc:
                     print(f"Could not fill end time: {exc}")
