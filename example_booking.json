@@ -1,9 +1,0 @@
-{
-    "space": "Book a Space in a Library",
-    "preferred_library": "Baillieu Library",
-    "min_capacity": 5,
-    "date": "10/12/2025",
-    "start_time": "14:00",
-    "end_time": "16:00",
-    "event_name": "Raid Meeting"
-}

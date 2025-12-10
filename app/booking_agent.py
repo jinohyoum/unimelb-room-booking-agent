@@ -5,14 +5,21 @@ from __future__ import annotations
 import json
 import os
 import re
-from datetime import datetime
+import sys
+import asyncio
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional
+from zoneinfo import ZoneInfo
 
 from openai import OpenAI
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE_BOOKING_PATH = PROJECT_ROOT / "example_booking.json"
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+MEL_TZ = ZoneInfo("Australia/Melbourne")
 
 SPACE_LABEL = "Book a Space in a Library"
 ALLOWED_LIBRARIES = {
@@ -56,6 +63,17 @@ def _agent_print(message: str) -> None:
         print(f"{AGENT_PREFIX} \033[1m{message}\033[0m")
 
 
+def _headless_flag(default: bool = True) -> bool:
+    """Return True if headless browser is requested via env (default True)."""
+
+    value = os.getenv("BOOKING_HEADLESS") or os.getenv("HEADLESS")
+    if value == "1":
+        return True
+    if value == "0":
+        return False
+    return default
+
+
 def load_env() -> None:
     """Lightweight .env loader (only sets variables that aren't already set)."""
 
@@ -82,15 +100,87 @@ def _normalize_library(raw: Optional[str]) -> Optional[str]:
     return None
 
 
+def _mel_now() -> datetime:
+    return datetime.now(MEL_TZ)
+
+
+def _next_weekday(target_weekday: int, *, prefer_next_week: bool = False) -> datetime:
+    """Return the next occurrence of the weekday (0=Mon)."""
+
+    today = _mel_now().date()
+    base = today + (timedelta(days=7) if prefer_next_week else timedelta())
+    days_ahead = (target_weekday - base.weekday()) % 7
+    if days_ahead == 0:
+        days_ahead = 7
+    result_date = base + timedelta(days=days_ahead)
+    return datetime.combine(result_date, datetime.min.time(), MEL_TZ)
+
+
+def _parse_relative_date(text: str) -> Optional[datetime]:
+    lowered = text.lower()
+    weekdays = {
+        "monday": 0,
+        "tuesday": 1,
+        "wednesday": 2,
+        "thursday": 3,
+        "friday": 4,
+        "saturday": 5,
+        "sunday": 6,
+    }
+    target = None
+    for name, idx in weekdays.items():
+        if name in lowered:
+            target = idx
+            break
+    if target is None:
+        return None
+
+    prefer_next_week = "next week" in lowered
+    return _next_weekday(target, prefer_next_week=prefer_next_week)
+
+
 def _normalize_date(raw: Optional[str]) -> str:
     if not raw:
         return ""
+
+    # Relative phrases like "next Thursday"
+    relative = _parse_relative_date(raw)
+    if relative:
+        return relative.strftime("%d/%m/%Y")
+
+    # Explicit formats with a year.
     for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d/%m/%y", "%d %b %Y", "%d %B %Y"):
         try:
-            parsed = datetime.strptime(raw.strip(), fmt)
+            parsed = datetime.strptime(raw.strip(), fmt).replace(tzinfo=MEL_TZ)
             return parsed.strftime("%d/%m/%Y")
         except Exception:
             continue
+
+    # Day/month without a year -> assume this year, or next if already passed.
+    for fmt in ("%d/%m", "%d-%m", "%d %b", "%d %B"):
+        try:
+            today = _mel_now().date()
+            text = raw.strip()
+            if "%b" in fmt or "%B" in fmt:
+                text_fmt = f"{fmt} %Y"
+                text_val = f"{text} {today.year}"
+            elif "/" in fmt:
+                text_fmt = fmt + "/%Y"
+                text_val = f"{text}/{today.year}"
+            elif "-" in fmt:
+                text_fmt = fmt + "-%Y"
+                text_val = f"{text}-{today.year}"
+            else:
+                text_fmt = fmt + " %Y"
+                text_val = f"{text} {today.year}"
+
+            candidate = datetime.strptime(text_val, text_fmt).replace(tzinfo=MEL_TZ)
+            if candidate.date() < today:
+                candidate = candidate.replace(year=today.year + 1)
+            return candidate.strftime("%d/%m/%Y")
+        except Exception:
+            continue
+
     return ""
 
 
@@ -152,7 +242,9 @@ def booking_agent(prompt: str, *, model: str = "gpt-4o-mini") -> Dict[str, Any]:
         "preferred_library must be null or one of: "
         "FBE Building, EASTERN RESOURCE CENTRE LIBRARY, Baillieu Library, "
         "Southbank The Hub, Werribee Learning & Teaching Building. "
-        "date is DD/MM/YYYY. time is HH:MM 24-hour. "
+        "For date, copy the user's wording (e.g., 'next Thursday' or '12/12'); "
+        "do NOT invent or assume a year. "
+        "time is HH:MM 24-hour. "
         "min_capacity is an integer. event_name is a short string."
     )
 
@@ -367,8 +459,7 @@ def chat_loop(*, model: str = "gpt-4o-mini", persist: bool = True) -> None:
                 _agent_print(
                     "Nice, here’s what I’m thinking: "
                     + _format_booking_summary(payload)
-                    + " Does that look right? If it does, just say something like "
-                      "'yes' or 'looks good'. If not, tell me what you'd like to change."
+                    + " Does that look right? If not, tell me what you'd like to change."
                 )
                 continue
             just_entered_booking = True
@@ -393,9 +484,24 @@ def chat_loop(*, model: str = "gpt-4o-mini", persist: bool = True) -> None:
         if session.awaiting_confirmation and _is_yes(prompt):
             payload = session.payload()
             target_path = _write_payload_to_file(payload) if persist else None
-            if target_path:
-                _agent_print(f"Got it, I’ve saved this booking JSON to {target_path}")
-            print(json.dumps(payload, indent=2))
+            if persist:
+                try:
+                    EXAMPLE_BOOKING_PATH.write_text(json.dumps(payload, indent=2))
+                except Exception as exc:
+                    _agent_print(f"Could not update example booking file: {exc}")
+            if persist:
+                try:
+                    from app.browser import booking_flow
+
+                    _agent_print("Starting browser booking flow to search for this slot...")
+                    asyncio.run(
+                        booking_flow.run_login_probe(
+                            headless=_headless_flag(),
+                            pause_before_close=not _headless_flag(),
+                        )
+                    )
+                except Exception as exc:
+                    _agent_print(f"Booking flow failed to launch: {exc}")
             booking_mode = False
             session = None
             continue
@@ -430,11 +536,13 @@ def chat_loop(*, model: str = "gpt-4o-mini", persist: bool = True) -> None:
 
         if just_entered_booking:
             just_entered_booking = False
-            _agent_print(
-                "To kick things off, send me one message with: library, date (DD/MM/YYYY), "
-                "start time, end time (HH:MM), capacity, and event name."
-            )
-            continue
+            initial_missing = session.missing_fields()
+            if initial_missing:
+                _agent_print(
+                    "To kick things off, send me one message with: library, date, "
+                    "start time, end time (HH:MM), capacity, and event name."
+                )
+                continue
 
         missing = session.missing_fields()
         if missing:
@@ -464,7 +572,7 @@ def chat_loop(*, model: str = "gpt-4o-mini", persist: bool = True) -> None:
             "Here’s what I’ve put together: "
             + _format_booking_summary(payload)
             + " Happy with that?"
-              "If not, tell me what to change."
+              " If not, tell me what to change."
         )
         session.awaiting_confirmation = True
 

@@ -10,3 +10,6 @@ __pycache__/
 # Editors
 .vscode/
 .idea/
+
+# Playwright auth state
+storage_state.json
