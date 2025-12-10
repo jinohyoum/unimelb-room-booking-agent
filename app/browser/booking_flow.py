@@ -34,6 +34,7 @@ def _booking_data() -> dict[str, Any]:
     try:
         return json.loads(EXAMPLE_BOOKING_PATH.read_text())
     except Exception:
+        # If the fixture is missing, fall back to empty defaults.
         return {}
 
 
@@ -137,6 +138,7 @@ async def select_first_room(page: Page) -> None:
                 break
 
         if not matched:
+            # No exact match; just take the first available option.
             pass
 
     await target_row.scroll_into_view_if_needed()
@@ -397,6 +399,7 @@ async def run_login_probe(
 
         # Keep the browser open until YOU decide to close it
         if pause_before_close:
+            # Leave the browser open so a human can poke around before exit.
             print("Browser is open. Do your thing, then press Enter in the terminal to close it...")
             input()  # blocks until you press Enter
 

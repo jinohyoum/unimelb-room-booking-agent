@@ -94,6 +94,7 @@ def _normalize_library(raw: Optional[str]) -> Optional[str]:
     value = raw.strip().lower()
     if value in ALLOWED_LIBRARIES:
         return ALLOWED_LIBRARIES[value]
+    # Accept loose nicknames by mapping to the canonical label.
     for key, canonical in LIBRARY_SYNONYMS.items():
         if key in value:
             return canonical
@@ -207,6 +208,7 @@ def _parse_json_payload(text: str) -> Dict[str, Any]:
     try:
         return json.loads(text)
     except Exception:
+        # If the model wrapped JSON in chatter, grab the first brace block.
         match = re.search(r"\{.*\}", text, re.DOTALL)
         if match:
             return json.loads(match.group(0))
@@ -214,6 +216,7 @@ def _parse_json_payload(text: str) -> Dict[str, Any]:
 
 
 def _validate_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    # Ensure every downstream consumer sees a consistent shape.
     return {
         "space": SPACE_LABEL,
         "preferred_library": _normalize_library(payload.get("preferred_library"))
@@ -314,6 +317,7 @@ class BookingSession:
 
     def __init__(self, *, model: str = "gpt-4o-mini") -> None:
         self.model = model
+        # Start with a blank-but-valid payload shape.
         self.fields: Dict[str, Any] = {
             "space": SPACE_LABEL,
             "preferred_library": None,
@@ -328,6 +332,7 @@ class BookingSession:
     def update_from_prompt(self, prompt: str, allowed: Optional[set[str]] = None) -> None:
         parsed = booking_agent(prompt, model=self.model)
         for key in self.fields:
+            # When tweaking an existing summary, only touch the allowed fields.
             if allowed is not None and key not in allowed:
                 continue
             value = parsed.get(key)
@@ -430,6 +435,7 @@ def chat_loop(*, model: str = "gpt-4o-mini", persist: bool = True) -> None:
     session: Optional[BookingSession] = None
     booking_mode = False
     just_entered_booking = False
+    # Simple state machine to switch between small talk and booking.
 
     while True:
         try:
@@ -493,6 +499,7 @@ def chat_loop(*, model: str = "gpt-4o-mini", persist: bool = True) -> None:
                 try:
                     from app.browser import booking_flow
 
+                    # Kick off the browser flow with the confirmed payload.
                     _agent_print("Starting browser booking flow to search for this slot...")
                     asyncio.run(
                         booking_flow.run_login_probe(
@@ -511,6 +518,7 @@ def chat_loop(*, model: str = "gpt-4o-mini", persist: bool = True) -> None:
             if session.awaiting_confirmation:
                 lowered = prompt.lower()
                 allowed_fields = set()
+                # Only nudge the fields the user actually mentioned.
                 if any(word in lowered for word in ["event", "name", "title"]):
                     allowed_fields.add("event_name")
                 if "library" in lowered:

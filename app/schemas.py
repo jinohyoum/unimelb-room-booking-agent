@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 
 class BookingRequest(BaseModel):
+    # Mirrors the booking UI fields with server-side validation.
 
     library: str = Field(..., description="Library name, e.g., Baillieu")
     event_name: str = Field(..., description="Name of the event to display in booking")
@@ -19,6 +20,7 @@ class BookingRequest(BaseModel):
 
 
 class BookingResponse(BaseModel):
+    # Lightweight wrapper around status messaging for API clients.
     status: str = Field(..., description="Status of the booking request")
     message: str = Field(..., description="Additional details about the outcome")
 
